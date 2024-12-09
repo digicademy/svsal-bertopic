@@ -1,0 +1,12 @@
+bertopic
+cohere-core
+hdbscan
+nest-asyncio
+numpy
+openai
+pandas
+python-dotenv
+scikit-learn
+tiktoken
+tqdm
+umap-learn
