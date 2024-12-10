@@ -1,0 +1,23 @@
+[project]
+name = "embeddings-create-upload"
+version = "0.1.0"
+description = "A project for creating and uploading embeddings"
+authors = [{name = "Andreas Wagner", email = "wagner@lhlt.mpg.de"}]
+license = "MIT"
+dependencies = [
+  "pandas",
+  "numpy",
+  "asyncio",
+  "nest_asyncio",
+  "jsonlines",
+  "tqdm",
+  "openai",
+  "cohere",
+  "cohere-core",
+  "tiktoken",
+  "umap",
+  "hdbscan",
+  "bertopic",
+  "python-dotenv",
+  "hdbscan"
+]
