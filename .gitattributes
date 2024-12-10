@@ -1,1 +1,4 @@
 *.pkl filter=lfs diff=lfs merge=lfs -text
+out-data/*.pkl filter=lfs diff=lfs merge=lfs -text
+out-data/*.csv filter=lfs diff=lfs merge=lfs -text
+out-data/*.jsonl filter=lfs diff=lfs merge=lfs -text
