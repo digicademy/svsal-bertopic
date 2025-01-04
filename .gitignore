@@ -1,4 +1,6 @@
 .env
+.venv
 .ipynb-checkpoints
 .ipynb_checkpoints
+.jupyter_ystore.db
 out-data/*
