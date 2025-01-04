@@ -3,21 +3,25 @@ name = "embeddings-create-upload"
 version = "0.1.0"
 description = "A project for creating and uploading embeddings"
 authors = [{name = "Andreas Wagner", email = "wagner@lhlt.mpg.de"}]
-license = "MIT"
+license = {text = "MIT License"}
 dependencies = [
-  "pandas",
-  "numpy",
   "asyncio",
-  "nest_asyncio",
+  "nest-asyncio",
+  "requests",
   "jsonlines",
-  "tqdm",
+  "logging",
+  "python-dotenv",
   "openai",
+  "tiktoken",
   "cohere",
   "cohere-core",
-  "tiktoken",
-  "umap",
-  "hdbscan",
   "bertopic",
-  "python-dotenv",
-  "hdbscan"
+  "jupyterlab",
+  "jupyter-collaboration",
+  "ipywidgets",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=6.29.5",
 ]
