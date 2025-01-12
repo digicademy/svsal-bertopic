@@ -19,6 +19,7 @@ dependencies = [
   "jupyterlab",
   "jupyter-collaboration",
   "ipywidgets",
+  "jinja2"
 ]
 
 [dependency-groups]
