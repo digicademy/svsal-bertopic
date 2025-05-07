@@ -19,7 +19,13 @@ dependencies = [
   "jupyterlab",
   "jupyter-collaboration",
   "ipywidgets",
-  "jinja2"
+  "jinja2",
+  "polars>=1.29.0",
+  "numpy>=1.26.4",
+  "tqdm>=4.67.1",
+  "dotenv>=0.9.9",
+  "orjson>=3.10.18",
+  "ipykernel>=6.29.5",
 ]
 
 [dependency-groups]
