@@ -26,6 +26,7 @@ dependencies = [
   "dotenv>=0.9.9",
   "orjson>=3.10.18",
   "ipykernel>=6.29.5",
+  "rich>=14.0.0",
 ]
 
 [dependency-groups]
