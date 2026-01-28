@@ -1,5 +1,6 @@
 .env
 .venv
+.bak.ipynb
 .ipynb-checkpoints
 .ipynb_checkpoints
 .jupyter_ystore.db
