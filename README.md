@@ -1,5 +1,7 @@
 # svsal-bertopic
 
+[![License: CC BY 4.0](https://img.shields.io/badge/License-CC_BY_4.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
 Experiment for analysis of the
 [School of Salamanca](https://www.salamanca.school) corpus with BERTopic.
 
