@@ -8,7 +8,11 @@ Experiment for analysis of the
 Developed together by [@jcarrill718](https://github.com/jcarrill718) and
 [@awagner-mainz](https://github.com/awagner-mainz), the idea was to do
 dynamic topic modelling over the corpus. Unfortunately, we got stuck when
-evaluating the topics BERTopic suggested.
+evaluating the topics BERTopic suggested. Remnants of that endeavour can
+still be consulted in the `bak` directory, e.g. a
+[notebook](./bak/LAT_zero_topic-3.ipynb) or
+[a](./bak/figs/fig_barchart.html) [couple](./bak/figs/fig_heatmap.html)
+[of](./bak/figs/fig_termrank.html) [visuals](./bak/figs/fig_topics.html).
 
 Since the beginning in 2024, the creation of text resources from the
 Salamanca corpus has been substantially reworked, and new opportunities
