@@ -37,6 +37,6 @@ is of interest to you, you may want to consider following the repository.
 
 ## License
 
-Documentation is published under
-[Creative Commons Attribution 4.0 International License][cc-by].
-Software code is published under MIT license.
+Documentation is published under Creative Commons Attribution 4.0
+International License. Software code is published under MIT license.
+See [LICENSE](./LICENSE).
