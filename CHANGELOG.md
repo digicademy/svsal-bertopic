@@ -41,7 +41,36 @@ This notebook has been updated to work with the refactored EmbAPI (v2):
 
 ---
 
-## 3. 01-embeddings-create January 2026 (b)
+## 3. 02-embeddings-upload January 2026 (a)
+
+This notebook has been enhanced with the following improvements:
+
+### 1. Smart Data Loading with Fallbacks
+- Automatically detects and loads the most recent embedding files
+- Tries multiple formats in order of preference: **parquet → pickle → CSV**
+- Handles the nested provider structure from `01-embeddings-create` notebook
+- Loads embeddings for multiple providers: `{provider_name: {doc_id: [embedding]}}`
+
+### 2. Full Polars Support
+- Replaced all pandas operations with polars for better performance
+- Efficient data handling for large datasets
+- Type-safe operations throughout
+
+### 3. Multi-Provider Upload System
+- **Automatically uploads embeddings from different models to different VDB projects**
+- Provider-to-project mapping defined in configuration
+- Each embedding provider (OpenAI, Cohere, Gemini, etc.) uploads to its designated project
+- Parallel-ready architecture for future optimization
+
+### 4. Enhanced Upload Management
+- Comprehensive progress tracking per provider
+- Detailed success/failure reporting
+- Option to upload specific providers only
+- Configurable retry logic and rate limiting
+
+---
+
+## 2. 01-embeddings-create January 2026 (b)
 
 Successfully applied all caching features to your original 2026-01-11 notebook while preserving:
 - ✅ Proper chunking implementation (OpenAI, Cohere, Gemini)
@@ -451,35 +480,6 @@ The final notebook combines:
 - **Progress visibility** for long-running jobs
 
 It's production-ready for multi-day embedding generation with automatic recovery and detailed progress tracking.
-
----
-
-## 2. 02-embeddings-upload January 2026 (a)
-
-This notebook has been enhanced with the following improvements:
-
-### 1. Smart Data Loading with Fallbacks
-- Automatically detects and loads the most recent embedding files
-- Tries multiple formats in order of preference: **parquet → pickle → CSV**
-- Handles the nested provider structure from `01-embeddings-create` notebook
-- Loads embeddings for multiple providers: `{provider_name: {doc_id: [embedding]}}`
-
-### 2. Full Polars Support
-- Replaced all pandas operations with polars for better performance
-- Efficient data handling for large datasets
-- Type-safe operations throughout
-
-### 3. Multi-Provider Upload System
-- **Automatically uploads embeddings from different models to different VDB projects**
-- Provider-to-project mapping defined in configuration
-- Each embedding provider (OpenAI, Cohere, Gemini, etc.) uploads to its designated project
-- Parallel-ready architecture for future optimization
-
-### 4. Enhanced Upload Management
-- Comprehensive progress tracking per provider
-- Detailed success/failure reporting
-- Option to upload specific providers only
-- Configurable retry logic and rate limiting
 
 ---
 
