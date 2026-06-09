@@ -48,9 +48,9 @@ run:
 python 05-embeddings-export-atlas.py --input-dir ./out-data
 ```
 
-The script reads the newest `*_all_docs.parquet` from `out-data`, selects an
-`embeddings_*` column, runs UMAP (2D), fits BERTopic on the same embeddings,
-and writes:
+The script reads the newest `*_all_docs.parquet` from `out-data`, selects a
+single `embeddings_*` column, runs UMAP (2D) for Atlas coordinates, fits
+BERTopic with its own UMAP reduction (default: 5 dimensions), and writes:
 
 - `out-data/embeddings_atlas_<provider>.parquet`
 - `out-data/embeddings_atlas_<provider>_topics.parquet`
@@ -59,6 +59,12 @@ Optional output formats:
 
 ```bash
 python 05-embeddings-export-atlas.py --also-jsonl --also-csv
+```
+
+Override BERTopic UMAP dimensionality (if needed):
+
+```bash
+python 05-embeddings-export-atlas.py --topic-umap-components 5
 ```
 
 Optional local viewer launch (if installed):

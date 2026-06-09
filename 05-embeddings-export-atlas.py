@@ -70,6 +70,12 @@ def parse_args() -> argparse.Namespace:
         help="UMAP minimum distance for 2D projection.",
     )
     parser.add_argument(
+        "--topic-umap-components",
+        type=int,
+        default=5,
+        help="UMAP dimensionality for BERTopic reduction (BERTopic default is 5).",
+    )
+    parser.add_argument(
         "--also-jsonl",
         action="store_true",
         help="Also write JSONL file next to parquet output.",
@@ -99,12 +105,18 @@ def find_latest_file(directory: str, pattern: str) -> Optional[str]:
 def detect_text_column(df, explicit_column: Optional[str]) -> str:
     """Resolve text column from explicit name or common defaults."""
     if explicit_column:
-        if explicit_column not in df.columns:
-            raise ValueError(f"Text column '{explicit_column}' not found in input data")
-        return explicit_column
-    for candidate in ["content", "passage", "text"]:
-        if candidate in df.columns:
-            return candidate
+        explicit_candidates = [c.strip() for c in explicit_column.split(",") if c.strip()]
+        if not explicit_candidates:
+            raise ValueError("No valid --text-column value provided")
+        for candidate in explicit_candidates:
+            if candidate in df.columns:
+                return candidate
+        raise ValueError(
+            f"None of the provided text columns were found in input data: {explicit_candidates}"
+        )
+    auto_candidates = [c for c in ["content", "passage", "text"] if c in df.columns]
+    if auto_candidates:
+        return auto_candidates[0]
     raise ValueError(
         "Could not auto-detect text column. Please pass --text-column explicitly."
     )
@@ -140,6 +152,8 @@ def topic_keywords_map(topic_model, top_n_words: int) -> dict[int, str]:
 
 def main() -> None:
     args = parse_args()
+    if args.topic_umap_components < 2:
+        raise ValueError("--topic-umap-components must be >= 2")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     logger = logging.getLogger(__name__)
     try:
@@ -196,7 +210,7 @@ def main() -> None:
     topic_model = BERTopic(
         umap_model=umap.UMAP(
             n_neighbors=args.umap_n_neighbors,
-            n_components=10,
+            n_components=args.topic_umap_components,
             min_dist=0.0,
             metric="cosine",
             random_state=42,
