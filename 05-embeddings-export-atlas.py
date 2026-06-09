@@ -88,6 +88,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def find_latest_file(directory: str, pattern: str) -> Optional[str]:
+    """Return newest file path matching pattern in directory, or None."""
     files = glob.glob(os.path.join(directory, pattern))
     if not files:
         return None
@@ -96,6 +97,7 @@ def find_latest_file(directory: str, pattern: str) -> Optional[str]:
 
 
 def detect_text_column(df, explicit_column: Optional[str]) -> str:
+    """Resolve text column from explicit name or common defaults."""
     if explicit_column:
         if explicit_column not in df.columns:
             raise ValueError(f"Text column '{explicit_column}' not found in input data")
@@ -109,6 +111,7 @@ def detect_text_column(df, explicit_column: Optional[str]) -> str:
 
 
 def detect_embedding_column(df, explicit_column: Optional[str]) -> str:
+    """Resolve embedding column from explicit name or first embeddings_* column."""
     if explicit_column:
         if explicit_column not in df.columns:
             raise ValueError(
@@ -122,6 +125,7 @@ def detect_embedding_column(df, explicit_column: Optional[str]) -> str:
 
 
 def topic_keywords_map(topic_model, top_n_words: int) -> dict[int, str]:
+    """Build topic_id -> comma-separated top keywords mapping."""
     info = topic_model.get_topic_info()
     topic_ids = info["Topic"].tolist()
     mapping: dict[int, str] = {}
@@ -180,10 +184,13 @@ def main() -> None:
     )
     projection_2d = projection_model.fit_transform(embeddings_array)
 
-    docs_for_topics = (
+    topic_texts = (
         docs_subset[text_col].fill_null("").cast(pl.Utf8).to_list()
     )
-    docs_for_topics = [d if d else f"[EMPTY:{idx}]" for idx, d in enumerate(docs_for_topics)]
+    topic_texts = [
+        doc_text if doc_text else f"[EMPTY:{idx}]"
+        for idx, doc_text in enumerate(topic_texts)
+    ]
 
     logger.info("Fitting BERTopic")
     topic_model = BERTopic(
@@ -205,8 +212,8 @@ def main() -> None:
         calculate_probabilities=True,
         verbose=True,
     )
-    topics, _ = topic_model.fit_transform(docs_for_topics, embeddings_array)
-    document_info = topic_model.get_document_info(docs_for_topics)
+    topics, _ = topic_model.fit_transform(topic_texts, embeddings_array)
+    document_info = topic_model.get_document_info(topic_texts)
     topic_keywords = topic_keywords_map(topic_model, args.top_n_words)
 
     metadata_cols = [c for c in docs_subset.columns if not c.startswith("embeddings_")]
@@ -232,7 +239,9 @@ def main() -> None:
     output_file = args.output_file or os.path.join(
         args.input_dir, f"embeddings_atlas_{provider}.parquet"
     )
-    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    output_dir = os.path.dirname(output_file)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
     atlas_df.write_parquet(output_file)
     logger.info("Wrote atlas parquet: %s", output_file)
 
@@ -259,6 +268,11 @@ def main() -> None:
         except FileNotFoundError:
             logger.error(
                 "embedding-atlas CLI not found. Install with: pip install embedding-atlas"
+            )
+        except subprocess.CalledProcessError as exc:
+            logger.error(
+                "Embedding Atlas launcher exited with status code %d",
+                exc.returncode,
             )
 
 
