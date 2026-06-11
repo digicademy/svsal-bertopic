@@ -55,6 +55,17 @@ BERTopic with its own UMAP reduction (default: 5 dimensions), and writes:
 - `out-data/embeddings_atlas_<provider>.parquet`
 - `out-data/embeddings_atlas_<provider>_topics.parquet`
 
+Selecting an embedding provider/column:
+
+- If multiple `embeddings_*` columns are present, the script uses the first one.
+- To choose a specific provider, pass `--embedding-column` with the exact column name.
+
+```bash
+python 05-embeddings-export-atlas.py \
+  --input-dir ./out-data \
+  --embedding-column embeddings_openai_text-embedding-3-small
+```
+
 Optional output formats:
 
 ```bash
