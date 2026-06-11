@@ -39,6 +39,65 @@ projection(s) for the Salamanca website will be created. Hopefully, it
 will be possible also to return to the analysis part soon (TM). If that
 is of interest to you, you may want to consider following the repository.
 
+## Embedding Atlas export pipeline
+
+For Embedding Atlas-friendly data export (2D projection + BERTopic metadata),
+run:
+
+```bash
+python 05-embeddings-export-atlas.py --input-dir ./out-data
+```
+
+The script reads the newest `*_all_docs.parquet` from `out-data`, selects a
+single `embeddings_*` column, runs UMAP (2D) for Atlas coordinates, fits
+BERTopic with its own UMAP reduction (default: 5 dimensions), and writes:
+
+- `out-data/embeddings_atlas_<provider>.parquet`
+- `out-data/embeddings_atlas_<provider>_topics.parquet`
+
+Selecting an embedding provider/column:
+
+- If multiple `embeddings_*` columns are present, the script uses the first one.
+- To choose a specific provider, pass `--embedding-column` with the exact column name.
+
+```bash
+python 05-embeddings-export-atlas.py \
+  --input-dir ./out-data \
+  --embedding-column embeddings_openai_text-embedding-3-small
+```
+
+Optional output formats:
+
+```bash
+python 05-embeddings-export-atlas.py --also-jsonl --also-csv
+```
+
+Override BERTopic UMAP dimensionality (if needed):
+
+```bash
+python 05-embeddings-export-atlas.py --topic-umap-components 5
+```
+
+Optional local viewer launch (if installed):
+
+```bash
+pip install embedding-atlas
+python 05-embeddings-export-atlas.py --launch-atlas
+```
+
+### Atlas dataset columns
+
+The output parquet keeps all existing non-embedding metadata columns from
+`*_all_docs.parquet` and adds:
+
+- `atlas_x`, `atlas_y` (2D UMAP coordinates)
+- `text_snippet` (truncated from text column)
+- `topic_id` (BERTopic integer topic)
+- `topic_label` (BERTopic topic name)
+- `topic_keywords` (comma-separated top words)
+- `topic_probability` (BERTopic confidence for assigned topic)
+- `embedding_provider` (provider/model identifier from embedding column)
+
 ## License
 
 Documentation is published under Creative Commons Attribution 4.0
