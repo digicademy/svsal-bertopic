@@ -60,6 +60,13 @@ Then add `$HOME/.local/bin` to your `PATH` (the installer will tell you how).
 
 Run this **once** from the repo root (not as a SLURM job):
 
+> ⚠️ Make sure you are in the **repo root**, not already inside `slurm/`.
+> Running the command below from inside `slurm/` resolves the destination to
+> `slurm/slurm/ollama.sif` and fails with
+> `could not open temporary file for copy ... no such file or directory`.
+> If you are already inside `slurm/`, drop the `slurm/` prefix instead
+> (`apptainer pull ollama.sif docker://...`).
+
 ```bash
 module load apptainer/1.4.3
 apptainer pull slurm/ollama.sif docker://ollama/ollama
@@ -76,6 +83,57 @@ Then open `run_embeddings_slurm.sh` and change `GPU_FLAG="--nv"` to
 
 The image file is ~1.5 GB and will be stored at `slurm/ollama.sif`.
 Pulling only needs to be repeated when you want to upgrade Ollama.
+
+### 4 — Pre-download models (only if your compute nodes have no internet access)
+
+`run_embeddings_slurm.sh` checks whether the requested model is already
+cached and, if not, tries to `ollama pull` it **inside the SLURM job** —
+i.e. on the compute node. If your compute partition has no outbound
+internet access (true for VIPER's `apu`/`apudev` partitions), that pull
+will fail. Download the model **once, from the login node**, into the same
+persistent `OLLAMA_MODELS` directory the job will later use:
+
+```bash
+module load apptainer/1.4.3
+
+# Must match the OLLAMA_MODELS path used in run_embeddings_slurm.sh
+export OLLAMA_MODELS="${PTMP:-${TMPDIR:-$HOME/ollama_models}}/ollama_models"
+mkdir -p "${OLLAMA_MODELS}"
+
+# Start the server in the background (the login node has internet)
+apptainer run --rocm \
+    --env "OLLAMA_HOST=127.0.0.1:11434" \
+    --env "OLLAMA_MODELS=${OLLAMA_MODELS}" \
+    --bind "${OLLAMA_MODELS}:${OLLAMA_MODELS}" \
+    slurm/ollama.sif serve &
+OLLAMA_PID=$!
+sleep 5   # give the server a moment to come up
+
+# Pull every model you might want to use later — repeat as needed
+apptainer exec --rocm \
+    --env "OLLAMA_HOST=127.0.0.1:11434" \
+    --env "OLLAMA_MODELS=${OLLAMA_MODELS}" \
+    --bind "${OLLAMA_MODELS}:${OLLAMA_MODELS}" \
+    slurm/ollama.sif ollama pull nomic-embed-text
+
+apptainer exec --rocm \
+    --env "OLLAMA_HOST=127.0.0.1:11434" \
+    --env "OLLAMA_MODELS=${OLLAMA_MODELS}" \
+    --bind "${OLLAMA_MODELS}:${OLLAMA_MODELS}" \
+    slurm/ollama.sif ollama pull bge-m3
+
+kill "${OLLAMA_PID}"
+```
+
+Once a model is cached in `${OLLAMA_MODELS}`, `run_embeddings_slurm.sh`
+detects it automatically (via `ollama show`, which only reads the local
+manifest) and skips the network-dependent pull step inside the job. See the
+[Ollama FAQ](https://docs.ollama.com/faq) for details on `OLLAMA_MODELS` and
+why `ollama pull` always needs network access, even for an already-known
+model name.
+
+> On NVIDIA login nodes, replace `--rocm` with `--nv`, or drop the flag
+> entirely — downloading a model doesn't require a GPU.
 
 ---
 
@@ -258,6 +316,7 @@ for the downstream notebooks.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `ERROR: 'uv' not found in PATH` | `uv` not installed or not on `PATH` | Install uv (see [Prerequisites](#prerequisites)) |
+| `apptainer pull` fails with `could not open temporary file for copy ... no such file or directory` | Command run from inside `slurm/` with a `slurm/...`-prefixed destination path | `cd` to the repo root first, or drop the `slurm/` prefix if already inside that directory |
 | `apptainer: command not found` | Wrong or missing module | Change `module load apptainer/1.4.3` in the script |
 | Server never comes up (timeout) | Container or GPU init too slow | Increase `--timeout` in `wait_for_server.py` call, or check `ollama_server_*.log` |
 | GPU not used / slow inference | `--nv` / `--rocm` mismatch | Check GPU vendor; use `--rocm` for VIPER (AMD), `--nv` for Raven (NVIDIA) |
