@@ -76,8 +76,12 @@ OLLAMA_SIF="${SCRIPT_DIR}/ollama.sif"
 LOG_DIR="${SCRIPT_DIR}/logs"
 OUTPUT_DIR="${REPO_ROOT}/out-data"
 
-# Model storage: prefer /ptmp (MPCDF fast scratch) > TMPDIR > HOME
-OLLAMA_MODELS="${PTMP:-${TMPDIR:-${HOME}/ollama_models}}/ollama_models_${SLURM_JOB_ID:-local}"
+# Model storage: prefer /ptmp (MPCDF fast scratch) > TMPDIR > HOME.
+# NOTE: this is a *persistent* path (no SLURM_JOB_ID suffix) so that models
+# pre-downloaded once via the "offline model download" steps in the README
+# are found again by every later job. Override OLLAMA_MODELS yourself before
+# calling sbatch if you need an isolated/job-specific cache instead.
+OLLAMA_MODELS="${OLLAMA_MODELS:-${PTMP:-${TMPDIR:-${HOME}/ollama_models}}/ollama_models}"
 OLLAMA_SERVER_LOG="${LOG_DIR}/ollama_server_${SLURM_JOB_ID:-local}.log"
 
 mkdir -p "${LOG_DIR}" "${OUTPUT_DIR}" "${OLLAMA_MODELS}"
@@ -135,14 +139,28 @@ echo "Waiting for Ollama server to be ready …"
 cd "${REPO_ROOT}"
 uv run python "${SCRIPT_DIR}/wait_for_server.py" --url "${OLLAMA_URL}"
 
-# ── Pull the requested embedding model ─────────���──────────────────────────────
-echo "Pulling model '${MODEL}' …"
-apptainer exec ${GPU_FLAG} \
+# ── Ensure the requested model is available ────────────────────────────────
+# `ollama show` only checks the local manifest in OLLAMA_MODELS and never
+# touches the network, so this is safe to run even on compute nodes without
+# internet access. The network-dependent `ollama pull` is only invoked as a
+# fallback when the model is missing -- on offline nodes, pre-download the
+# model first (see README: "Downloading models without internet access").
+echo "Checking whether model '${MODEL}' is already cached in ${OLLAMA_MODELS} ..."
+if apptainer exec ${GPU_FLAG} \
     --env "OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT}" \
     --env "OLLAMA_MODELS=${OLLAMA_MODELS}" \
     --bind "${OLLAMA_MODELS}:${OLLAMA_MODELS}" \
-    "${OLLAMA_SIF}" \
-    ollama pull "${MODEL}"
+    "${OLLAMA_SIF}" ollama show "${MODEL}" >/dev/null 2>&1; then
+    echo "Model '${MODEL}' already present -- skipping pull."
+else
+    echo "Model '${MODEL}' not cached locally -- attempting to pull it (requires internet) ..."
+    apptainer exec ${GPU_FLAG} \
+        --env "OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT}" \
+        --env "OLLAMA_MODELS=${OLLAMA_MODELS}" \
+        --bind "${OLLAMA_MODELS}:${OLLAMA_MODELS}" \
+        "${OLLAMA_SIF}" \
+        ollama pull "${MODEL}"
+fi
 echo "Model '${MODEL}' is ready."
 
 # ── Create embeddings ─────────────────────────────────────────────────────────
