@@ -5,14 +5,27 @@
 #
 # Usage (submit from the repo root OR from the slurm/ directory):
 #
-#   sbatch slurm/run_embeddings.slurm [model]
+#   sbatch slurm/run_embeddings_slurm.sh [MODEL ...]
 #
-# The MODEL argument is optional; default: nomic-embed-text
+# Zero or more MODEL arguments. Each MODEL is an Ollama embedding model
+# name; two special tokens are recognised by the Python script:
+#
+#   auto   (default if no MODEL given) -- pick the first locally-available
+#                                         embedding model, alphabetically
+#   all                                -- run every locally-available
+#                                         embedding model in parallel
+#
+# Examples:
+#
+#   sbatch slurm/run_embeddings_slurm.sh
+#   sbatch slurm/run_embeddings_slurm.sh all
+#   sbatch slurm/run_embeddings_slurm.sh bge-m3
+#   sbatch slurm/run_embeddings_slurm.sh bge-m3 nomic-embed-text mxbai-embed-large
 #
 # Good embedding models for Spanish / Latin texts (check https://ollama.com/search?c=embedding):
 #   nomic-embed-text          768 dims   fast, solid quality
 #   mxbai-embed-large         1024 dims  high quality
-#   bge-m3                    1024 dims  multilingual — best for non-English corpora
+#   bge-m3                    1024 dims  multilingual -- best for non-English corpora
 #   snowflake-arctic-embed2   1024 dims  strong multilingual support
 #
 # ------------- Prerequisites (run ONCE before submitting) --------------------
@@ -62,7 +75,19 @@
 set -euo pipefail
 
 # ── Parameters ────────────────────────────────────────────────────────────────
-MODEL="${1:-nomic-embed-text}"
+# All positional args after the script name are treated as Ollama embedding
+# model names. Special tokens 'auto' (default) and 'all' are forwarded to the
+# Python script for server-side discovery (see slurm/README.md).
+#
+#   sbatch slurm/run_embeddings_slurm.sh                  # auto: first available
+#   sbatch slurm/run_embeddings_slurm.sh all              # every cached embedding model
+#   sbatch slurm/run_embeddings_slurm.sh bge-m3           # one specific
+#   sbatch slurm/run_embeddings_slurm.sh bge-m3 nomic-embed-text mxbai-embed-large
+if [ "$#" -eq 0 ]; then
+    MODELS=("auto")
+else
+    MODELS=("$@")
+fi
 OLLAMA_PORT=11434
 OLLAMA_URL="http://localhost:${OLLAMA_PORT}"
 
@@ -88,11 +113,11 @@ mkdir -p "${LOG_DIR}" "${OUTPUT_DIR}" "${OLLAMA_MODELS}"
 
 echo "=================================================="
 echo "  SVSAL Embedding Creation"
-echo "  Job  : ${SLURM_JOB_ID:-<interactive>}"
-echo "  Node : ${SLURMD_NODENAME:-$(hostname)}"
-echo "  Model: ${MODEL}"
-echo "  Time : $(date)"
-echo "  Repo : ${REPO_ROOT}"
+echo "  Job   : ${SLURM_JOB_ID:-<interactive>}"
+echo "  Node  : ${SLURMD_NODENAME:-$(hostname)}"
+echo "  Models: ${MODELS[*]}"
+echo "  Time  : $(date)"
+echo "  Repo  : ${REPO_ROOT}"
 echo "=================================================="
 
 # ── System modules ────────────────────────────────────────────────────────────
@@ -139,36 +164,51 @@ echo "Waiting for Ollama server to be ready …"
 cd "${REPO_ROOT}"
 uv run python "${SCRIPT_DIR}/wait_for_server.py" --url "${OLLAMA_URL}"
 
-# ── Ensure the requested model is available ────────────────────────────────
+# ── Ensure each requested model is available ──────────────────────────────
 # `ollama show` only checks the local manifest in OLLAMA_MODELS and never
 # touches the network, so this is safe to run even on compute nodes without
 # internet access. The network-dependent `ollama pull` is only invoked as a
-# fallback when the model is missing -- on offline nodes, pre-download the
-# model first (see README: "Downloading models without internet access").
-echo "Checking whether model '${MODEL}' is already cached in ${OLLAMA_MODELS} ..."
-if apptainer exec ${GPU_FLAG} \
-    --env "OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT}" \
-    --env "OLLAMA_MODELS=${OLLAMA_MODELS}" \
-    --bind "${OLLAMA_MODELS}:${OLLAMA_MODELS}" \
-    "${OLLAMA_SIF}" ollama show "${MODEL}" >/dev/null 2>&1; then
-    echo "Model '${MODEL}' already present -- skipping pull."
-else
-    echo "Model '${MODEL}' not cached locally -- attempting to pull it (requires internet) ..."
-    apptainer exec ${GPU_FLAG} \
+# fallback when a model is missing -- on offline nodes, pre-download each
+# model first (see README: "Pre-download models").
+#
+# Special tokens 'auto' and 'all' are resolved by the Python script against
+# the live server, so we leave them alone here.
+for MODEL in "${MODELS[@]}"; do
+    if [ "${MODEL}" = "auto" ] || [ "${MODEL}" = "all" ]; then
+        echo "Model spec '${MODEL}' will be resolved by the Python script at runtime."
+        continue
+    fi
+    echo "Checking whether model '${MODEL}' is already cached in ${OLLAMA_MODELS} ..."
+    if apptainer exec ${GPU_FLAG} \
         --env "OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT}" \
         --env "OLLAMA_MODELS=${OLLAMA_MODELS}" \
         --bind "${OLLAMA_MODELS}:${OLLAMA_MODELS}" \
-        "${OLLAMA_SIF}" \
-        ollama pull "${MODEL}"
-fi
-echo "Model '${MODEL}' is ready."
+        "${OLLAMA_SIF}" ollama show "${MODEL}" >/dev/null 2>&1; then
+        echo "Model '${MODEL}' already present -- skipping pull."
+    else
+        echo "Model '${MODEL}' not cached locally -- attempting to pull it (requires internet) ..."
+        apptainer exec ${GPU_FLAG} \
+            --env "OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT}" \
+            --env "OLLAMA_MODELS=${OLLAMA_MODELS}" \
+            --bind "${OLLAMA_MODELS}:${OLLAMA_MODELS}" \
+            "${OLLAMA_SIF}" \
+            ollama pull "${MODEL}"
+    fi
+    echo "Model '${MODEL}' is ready."
+done
+
+# ── Build the --model arguments for the Python script ─────────────────────
+MODEL_ARGS=()
+for MODEL in "${MODELS[@]}"; do
+    MODEL_ARGS+=(--model "${MODEL}")
+done
 
 # ── Create embeddings ─────────────────────────────────────────────────────────
 echo "Starting embedding creation …"
 uv run python "${SCRIPT_DIR}/create_embeddings_ollama.py" \
     --input              "${REPO_ROOT}/in-data/corpus_20260111.csv" \
     --output-dir         "${OUTPUT_DIR}" \
-    --model              "${MODEL}" \
+    "${MODEL_ARGS[@]}" \
     --url                "${OLLAMA_URL}/v1" \
     --concurrent-requests 5 \
     --batch-size         32

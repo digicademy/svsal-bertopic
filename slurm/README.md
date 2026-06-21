@@ -132,6 +132,12 @@ manifest) and skips the network-dependent pull step inside the job. See the
 why `ollama pull` always needs network access, even for an already-known
 model name.
 
+> **Tip:** Pre-download as many embedding models as you want to experiment
+> with — then submit jobs with `sbatch slurm/run_embeddings_slurm.sh all`
+> to embed against every one of them in a single run, or
+> `sbatch slurm/run_embeddings_slurm.sh` (no argument) to let the script
+> pick the first one. See *Choosing one or more embedding models* below.
+
 > On NVIDIA login nodes, replace `--rocm` with `--nv`, or drop the flag
 > entirely — downloading a model doesn't require a GPU.
 
@@ -149,15 +155,38 @@ If your CSV uses different column names, pass `--text-column` and
 
 ---
 
-## Choosing an embedding model
+## Choosing one or more embedding models
 
-Pass the model name as an argument to `sbatch` (see [Submitting the job](#submitting-the-job)).
-The model will be downloaded automatically on the first run and cached in
-`$OLLAMA_MODELS` for subsequent runs.
+The script can embed the same corpus with **several models in one run**,
+in parallel against the same Ollama server. Pass the model names as
+positional arguments to `sbatch`; the script also recognises two special
+tokens that trigger server-side discovery:
+
+| Argument | Effect |
+|---|---|
+| *(no argument)* | Equivalent to `auto`. |
+| `auto` | Use the alphabetically first locally-available embedding model. Useful when you don't care which model is picked, or when you've only pulled one. |
+| `all` | Run every locally-available embedding model concurrently. |
+| `bge-m3` (etc.) | Use the named model. Repeat for several specific models. |
+
+Discovery uses Ollama's `GET /api/tags` (locally cached models) and `POST
+/api/show` (per-model `capabilities` array); a model is treated as an
+embedding model iff its capabilities include `"embedding"`. The capability
+flag was [added to Ollama in PR #10066](https://github.com/ollama/ollama/pull/10066)
+and is derived from the GGUF `pooling_type` metadata.
+
+You can also ask the script what's available without launching a job:
+
+```bash
+uv run python slurm/create_embeddings_ollama.py --list-models \
+    --url http://localhost:11434/v1
+```
+
+Models worth considering for the Salamanca corpus:
 
 | Model | Dims | Notes |
 |---|---|---|
-| `nomic-embed-text` | 768 | Default. Fast, good quality, English-biased. |
+| `nomic-embed-text` | 768 | Fast, good quality, English-biased. |
 | `mxbai-embed-large` | 1024 | High quality, moderate speed. |
 | `bge-m3` | 1024 | **Recommended for Spanish / Latin.** Truly multilingual, strong cross-lingual retrieval. |
 | `snowflake-arctic-embed2` | 1024 | Strong multilingual support, competitive quality. |
@@ -171,7 +200,7 @@ Browse all available models at <https://ollama.com/search?c=embedding>.
 
 ### SLURM resource directives
 
-Open `run_embeddings.slurm` and adjust the `#SBATCH` block at the top for
+Open `run_embeddings_slurm.sh` and adjust the `#SBATCH` block at the top for
 your cluster:
 
 ```bash
@@ -184,21 +213,22 @@ your cluster:
 
 ### Cluster-specific paths
 
-At the top of `run_embeddings.slurm` there is a *Paths* section:
+At the top of `run_embeddings_slurm.sh` there is a *Paths* section:
 
 ```bash
-OLLAMA_MODELS="${PTMP:-${TMPDIR:-${HOME}/ollama_models}}/ollama_models_${SLURM_JOB_ID}"
+OLLAMA_MODELS="${OLLAMA_MODELS:-${PTMP:-${TMPDIR:-${HOME}/ollama_models}}/ollama_models}"
 ```
 
 This stores downloaded model weights on fast scratch storage (`$PTMP` at MPCDF)
-so that they do not count against your home-directory quota.  If your cluster
+so that they do not count against your home-directory quota. If your cluster
 uses a different scratch variable (e.g. `$SCRATCH`, `$WORK`), replace `$PTMP`
-accordingly.
+accordingly. The path is shared across jobs, so a model downloaded once is
+reused by every later run.
 
 ### Python script parameters
 
 All options accepted by `create_embeddings_ollama.py` can be overridden in
-the `uv run python …` call near the bottom of `run_embeddings.slurm`:
+the `uv run python …` call near the bottom of `run_embeddings_slurm.sh`:
 
 | Flag | Default | Description |
 |---|---|---|
@@ -206,16 +236,38 @@ the `uv run python …` call near the bottom of `run_embeddings.slurm`:
 | `--text-column` | `text` | CSV column containing the passage text |
 | `--id-column` | *(first column)* | CSV column to use as document ID |
 | `--output-dir` | `out-data` | Directory for all output files |
-| `--model` | `nomic-embed-text` | Ollama model name (overridden by the `sbatch` argument) |
-| `--min-tokens` | `10` | Skip passages shorter than this many tokens |
-| `--context-limit` | `8192` | Token limit; longer passages are truncated to this |
-| `--concurrent-requests` | `5` | Parallel embedding API calls |
+| `--model` | `auto` | Ollama embedding model. Repeatable; accepts `auto` / `all`. Forwarded from the `sbatch` positional arguments. |
+| `--min-tokens` | `10` | Skip passages shorter than this many tokens (uses tiktoken `cl100k_base` as a rough heuristic — not any model's exact tokenizer). |
+| `--context-limit` | *(unset → model-native)* | Optional **cap** on tokens per text. If unset, each model's native `context_length` (queried from `/api/show`) is used. If set, the effective limit per model is `min(model_native, --context-limit)`. |
+| `--concurrent-requests` | `5` | Parallel embedding API calls *per model* |
 | `--batch-size` | `32` | Texts per API call |
 | `--cache-save-interval` | `7200` | Seconds between incremental cache saves (default: 2 h) |
 | `--retry-max` | `5` | Max retries per batch before marking it as failed |
+| `--list-models` | – | Print discovered embedding models (with native context, output dim, family) and exit. |
 
 Run `uv run python slurm/create_embeddings_ollama.py --help` locally to see
 all options.
+
+### Per-model configuration discovered from Ollama
+
+For each requested model the script queries Ollama's `POST /api/show` and
+records the following in the per-provider section of the dated
+`*_all_processing_metadata.json` output:
+
+| Field | Source in `/api/show` |
+|---|---|
+| `native_context_length` | First `model_info` key ending in `.context_length` (e.g. `bert.context_length`) — the model's GGUF-declared max input. |
+| `embedding_length` | First `model_info` key ending in `.embedding_length` — the output vector dimension. |
+| `family`, `parameter_size`, `quantization_level` | `details.{family,parameter_size,quantization_level}` |
+| `effective_context_limit` | `min(native_context_length, --context-limit if set)`. Used for per-model pre-truncation at batch time. |
+| `user_context_cap` | The value of `--context-limit` at run time (may be `null` if you didn't set it). |
+
+Per-batch text truncation is performed per model using the *effective*
+limit, so a model with a 512-token native context isn't sent 8192-token
+inputs that would silently get clipped server-side. As a belt-and-braces
+measure Ollama's `/v1/embeddings` keeps its default `truncate: true`, so
+any miscount in our heuristic tokenizer still produces a correct
+embedding rather than an error.
 
 ---
 
@@ -224,12 +276,17 @@ all options.
 Submit from the **repo root** (or from the `slurm/` directory — both work):
 
 ```bash
-# Default model (nomic-embed-text):
-sbatch slurm/run_embeddings.slurm
+# Default: use the first locally-available embedding model
+sbatch slurm/run_embeddings_slurm.sh
 
-# Specify a different model:
-sbatch slurm/run_embeddings.slurm bge-m3
-sbatch slurm/run_embeddings.slurm mxbai-embed-large
+# Use every embedding model that's been pre-downloaded
+sbatch slurm/run_embeddings_slurm.sh all
+
+# One specific model
+sbatch slurm/run_embeddings_slurm.sh bge-m3
+
+# Several specific models, embedded concurrently against the same server
+sbatch slurm/run_embeddings_slurm.sh bge-m3 nomic-embed-text mxbai-embed-large
 ```
 
 Monitor the job:
@@ -256,18 +313,28 @@ scancel <job_id>
 
 ## Output files
 
-All output is written to `out-data/` in the repo root.
-Files are prefixed with the current date (`YYYY-MM-DD`).
+All output is written to `out-data/` in the repo root. Dated final
+outputs are prefixed with the current date (`YYYY-MM-DD`); per-model
+intermediates use the provider identifier `localhost_<model>` and a
+timestamp.
+
+The shapes match the interactive notebook `01-embeddings-create.*.ipynb`
+exactly, so the downstream notebooks (`02-…`, `03-…`, `04-…`) consume
+these files without modification.
 
 | File | Description |
 |---|---|
-| `YYYY-MM-DD_all_docs.parquet` | Document metadata (all CSV columns, filtered) |
-| `YYYY-MM-DD_all_embeddings.parquet` | Per-document embedding vectors (columns: `doc_id`, `embedding`) |
-| `YYYY-MM-DD_all_embeddings.pkl` | Numpy array + doc_id list, compatible with the notebook |
-| `YYYY-MM-DD_all_embeddings.jsonl` | Vector-DB upload payload: `{id, vector, ...metadata}` per line |
-| `YYYY-MM-DD_all_processing_metadata.json` | Run configuration (model, paths, parameters, timestamp) |
-| `YYYY-MM-DD_all_embedding_statistics.json` | Success / failure / skip counts and processing time |
-| `embeddings_cache.pkl` | **Incremental cache** — enables resume (see below) |
+| `YYYY-MM-DD_all_docs.parquet` | Docs DataFrame with one `embeddings_localhost_<model>` column per requested model |
+| `YYYY-MM-DD_all_docs.pkl` | Pickle of the same DataFrame |
+| `YYYY-MM-DD_all_docs.csv` | Same docs without embedding columns (CSV-friendly) |
+| `YYYY-MM-DD_all_embeddings.pkl` | Nested-dict pickle: `{localhost_<model>: {doc_id: vector}}` |
+| `YYYY-MM-DD_all_embeddings.parquet` | Same nested shape, parquet (one row per provider) |
+| `YYYY-MM-DD_all_embeddings.jsonl` | One line per `(doc_id, model)`: `{id, model, provider_id, vector, ...metadata}` |
+| `YYYY-MM-DD_all_processing_metadata.json` | Per-provider run config (model, paths, parameters, timestamps) |
+| `YYYY-MM-DD_all_embedding_statistics.json` | Per-provider success / failure / skip counts and processing time |
+| `localhost_<model>_<YYYYmmdd_HHMMSS>.parquet` | Per-model parquet, written as each model finishes |
+| `embeddings_cache.pkl` | **Incremental cache** — enables resume (see below). Shape: `{localhost_<model>: {doc_id: vector}}`. |
+| `embeddings_manifest.json` | Tracks which providers have completed. Used for whole-model skip on re-runs. |
 | `YYYY-MM-DD_HH-MM-SS_embeddings_ollama.log` | Full log of the Python script run |
 | `slurm/logs/svsal-embeddings_<job_id>.out` | SLURM stdout (combined Python + shell output) |
 | `slurm/logs/svsal-embeddings_<job_id>.err` | SLURM stderr |
@@ -278,16 +345,31 @@ Files are prefixed with the current date (`YYYY-MM-DD`).
 ## Resuming an interrupted job
 
 The embedding script saves a rolling cache (`out-data/embeddings_cache.pkl`)
-every `--cache-save-interval` seconds and again when it finishes.  If the job
-is cancelled (e.g. it hits the wall-clock limit), simply re-submit:
+every `--cache-save-interval` seconds and again when it finishes. Two levels
+of skip make resume robust:
+
+1. **Whole-model skip** — if a model is recorded in `embeddings_manifest.json`
+   as having completed, it is skipped entirely on the next run.
+2. **Per-doc skip** — for any model not yet completed, already-cached
+   documents are skipped and only the missing ones are embedded.
+
+So if a job is cancelled (e.g. it hits the wall-clock limit), simply
+re-submit with the same model list:
 
 ```bash
-sbatch slurm/run_embeddings.slurm bge-m3
+sbatch slurm/run_embeddings_slurm.sh bge-m3 nomic-embed-text
 ```
 
-On startup the script detects the existing cache, skips all already-embedded
-documents, and only requests embeddings for the remaining ones.  No manual
-intervention is required.
+No manual intervention is required. You can also add a model on the
+re-submission — already-completed models are skipped, the new model runs
+from scratch:
+
+```bash
+# Originally
+sbatch slurm/run_embeddings_slurm.sh bge-m3
+# Later, add another model — bge-m3 is skipped (manifest), mxbai-embed-large runs
+sbatch slurm/run_embeddings_slurm.sh bge-m3 mxbai-embed-large
+```
 
 > **Tip:** For very large corpora, set `--time` to the maximum allowed by your
 > cluster and rely on the cache for multi-day runs across several jobs.
