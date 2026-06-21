@@ -18,14 +18,13 @@ modification.
 ```
 slurm/
 ├── README.md                     # this file
-├── run_embeddings.slurm          # SLURM batch script (entry point)
+├── run_embeddings_slurm.sh       # SLURM batch script (entry point)
 ├── create_embeddings_ollama.py   # Python embedding script
 ├── wait_for_server.py            # server-readiness probe (used by the batch script)
-├── ollama.sif                    # Apptainer image — created by you (see below, not in git)
-└── logs/                         # per-job stdout/stderr and server logs (created at runtime)
+└── ollama.sif                    # Apptainer image — created by you (see below, not in git)
 ```
 
-> `ollama.sif` and `logs/` are **not** tracked by git (see `.gitignore`).
+> `ollama.sif` is **not** tracked by git (see `.gitignore`).
 
 ---
 
@@ -35,7 +34,7 @@ slurm/
 
 The batch script assumes `apptainer/1.4.3` is available as a module.  
 If your cluster uses a different version, edit the `module load` line in
-`run_embeddings.slurm`.
+`run_embeddings_slurm.sh`.
 
 ### 2 — `uv` package manager
 
@@ -72,7 +71,7 @@ apptainer pull slurm/ollama.sif docker://ollama/ollama
 apptainer pull slurm/ollama.sif docker://ollama/ollama:rocm
 ```
 
-Then open `run_embeddings.slurm` and change `GPU_FLAG="--nv"` to
+Then open `run_embeddings_slurm.sh` and change `GPU_FLAG="--nv"` to
 `GPU_FLAG="--rocm"`.
 
 The image file is ~1.5 GB and will be stored at `slurm/ollama.sif`.

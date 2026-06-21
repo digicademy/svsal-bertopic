@@ -25,17 +25,39 @@
 #   # and change GPU_FLAG below from "--nv" to "--rocm".
 #
 # ------------- SLURM directives — adjust to your cluster --------------------
+#SBATCH --mail-type=none
+#SBATCH --mail-user=wagner@lhlt.mpg.de
 #SBATCH --job-name=svsal-embeddings
-#SBATCH --output=slurm/logs/%x_%j.out
-#SBATCH --error=slurm/logs/%x_%j.err
-#SBATCH --time=24:00:00
-#SBATCH --nodes=1
+
+#SBATCH -D .                    # Initial working directory
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
+
+#SBATCH --constraint="apu"
+
+# --- Change the following for testing the workflow/GPU setup ---
+#SBATCH --time=22:00:00
+# #SBATCH --partition=apu
+#SBATCH --partition=apudev      # apudev: for testing, 1 node with 2 MI300, 15 min. walltime
+
+# --- VIPER default case: use a single APU on a shared node ---
+#SBATCH --gres=gpu:1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
-#SBATCH --gres=gpu:1
-# Uncomment / adjust the partition line for your cluster:
-# #SBATCH --partition=gpu
+#SBATCH --mem=110000
+
+# --- VIPER alternative case: two APUs on a shared node ---
+# #SBATCH --gres=gpu:2
+# #SBATCH --ntasks=1
+# #SBATCH --cpus-per-task=32
+# #SBATCH --mem=220000
+
+# --- DAIS: H200 on a shared node ---
+# #SBATCH --partition="gpu1"
+# #SBATCH --gres=gpu:h200:1
+# #SBATCH --cpus-per-task=12
+# #SBATCH --mem=250000
+
 
 set -euo pipefail
 
@@ -45,7 +67,7 @@ OLLAMA_PORT=11434
 OLLAMA_URL="http://localhost:${OLLAMA_PORT}"
 
 # GPU flag: --nv for NVIDIA (Raven), --rocm for AMD (VIPER)
-GPU_FLAG="--nv"
+GPU_FLAG="--rocm"
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
