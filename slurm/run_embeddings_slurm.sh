@@ -108,16 +108,19 @@ else
 fi
 SCRIPT_DIR="${REPO_ROOT}/slurm"
 OLLAMA_SIF="${SCRIPT_DIR}/ollama.sif"
-LOG_DIR="${SCRIPT_DIR}/logs"
+LOG_DIR="${SCRIPT_DIR}"
 OUTPUT_DIR="${REPO_ROOT}/out-data"
 
-# Model storage: prefer /ptmp (MPCDF fast scratch) > TMPDIR > HOME.
-# NOTE: this is a *persistent* path (no SLURM_JOB_ID suffix) so that models
-# pre-downloaded once via the "offline model download" steps in the README
-# are found again by every later job. Override OLLAMA_MODELS yourself before
-# calling sbatch if you need an isolated/job-specific cache instead.
-OLLAMA_MODELS="${OLLAMA_MODELS:-${PTMP:-${TMPDIR:-${HOME}/ollama_models}}/ollama_models}"
-
+# Prefer an externally-supplied OLLAMA_MODELS; otherwise build it from
+# the canonical scratch directory layout, since $PTMP is not always
+# exported into SLURM jobs on this cluster.
+if [ -z "${OLLAMA_MODELS:-}" ]; then
+    if   [ -d "/ptmp/${USER}" ];   then OLLAMA_MODELS="/ptmp/${USER}/ollama-models"
+    elif [ -d "/scratch/${USER}" ];then OLLAMA_MODELS="/scratch/${USER}/ollama-models"
+    elif [ -n "${TMPDIR:-}" ];     then OLLAMA_MODELS="${TMPDIR}/ollama_models"
+    else                                OLLAMA_MODELS="${HOME}/ollama_models"
+    fi
+fi
 OLLAMA_SERVER_LOG="${LOG_DIR}/ollama_server_${SLURM_JOB_ID:-local}.log"
 
 mkdir -p "${LOG_DIR}" "${OUTPUT_DIR}" "${OLLAMA_MODELS}"
