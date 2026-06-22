@@ -18,7 +18,8 @@ modification.
 ```
 slurm/
 ├── README.md                     # this file
-├── run_embeddings_slurm.sh       # SLURM batch script (entry point)
+├── run_embeddings_slurm.sh       # SLURM batch script — create embeddings (entry point)
+├── run_atlas_export_slurm.sh     # SLURM batch script — Embedding Atlas export (CPU job)
 ├── create_embeddings_ollama.py   # Python embedding script
 ├── wait_for_server.py            # server-readiness probe (used by the batch script)
 └── ollama.sif                    # Apptainer image — created by you (see below, not in git)
@@ -323,3 +324,42 @@ for the downstream notebooks.
 | `text column 'text' not found` | Different column name in CSV | Pass `--text-column <correct-name>` in the script call |
 | Job killed before finishing | Wall-clock limit exceeded | Re-submit — the cache resumes automatically |
 | Embeddings all zero / error in log | Model not supported by Ollama's `/v1/embeddings` endpoint | Choose a model from `ollama.com/search?c=embedding` |
+
+---
+
+## Exporting to Embedding Atlas (optional, separate job)
+
+Once a SLURM embedding job has produced a `<date>_all_docs.parquet` file
+in `out-data/`, you can run [Embedding Atlas](https://github.com/apple/embedding-atlas)
+exports for every embedding column it contains via a second SLURM script:
+
+```bash
+sbatch slurm/run_atlas_export_slurm.sh
+# or, to use a specific docs parquet:
+sbatch slurm/run_atlas_export_slurm.sh out-data/2026-06-20_all_docs.parquet
+```
+
+The script:
+
+1. Finds the most recent `*_all_docs.parquet` in `out-data/` (or uses the path
+   you pass as the first positional argument).
+2. Lists every column starting with `embeddings_` and loops the
+   `05-embeddings-export-atlas.py` exporter once per column.
+3. Builds a Windows-safe output filename per provider by stripping the
+   `:latest` Ollama tag and replacing any other `:` with `-`. So
+   `embeddings_localhost_bge-m3:latest` becomes
+   `out-data/embeddings_atlas_localhost_bge-m3.parquet`, and
+   `embeddings_localhost_some-model:q4_0` becomes
+   `out-data/embeddings_atlas_localhost_some-model-q4_0.parquet`.
+4. Continues past per-provider failures (so a BERTopic issue on one
+   model doesn't abandon the others) and prints a final pass/fail tally.
+
+This job is **CPU-only** — `05-embeddings-export-atlas.py` runs UMAP +
+HDBSCAN + BERTopic on pre-computed embeddings, no GPU needed. The
+defaults at the top of `run_atlas_export_slurm.sh` request 16 CPUs and
+64 GB RAM with a 12 h wall-clock limit; tune these to your corpus size.
+
+> The atlas exporter writes its outputs (`embeddings_atlas_<provider>.parquet`
+> and `embeddings_atlas_<provider>_topics.parquet`) alongside the docs
+> parquet in `out-data/`. Pass `--launch-atlas` only when running locally
+> on a workstation, not inside the SLURM job — the Atlas UI is interactive.
