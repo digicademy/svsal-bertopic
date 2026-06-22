@@ -49,7 +49,7 @@
 #SBATCH --constraint="apu"
 
 # --- Change the following for testing the workflow/GPU setup ---
-#SBATCH --time=22:00:00
+#SBATCH --time=00:15:00
 # #SBATCH --partition=apu
 #SBATCH --partition=apudev      # apudev: for testing, 1 node with 2 MI300, 15 min. walltime
 
@@ -95,8 +95,16 @@ OLLAMA_URL="http://localhost:${OLLAMA_PORT}"
 GPU_FLAG="--rocm"
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(dirname "${SCRIPT_DIR}")"
+SUBMIT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
+if   [ -f "${SUBMIT_DIR}/pyproject.toml" ]; then
+    REPO_ROOT="${SUBMIT_DIR}"
+elif [ -f "${SUBMIT_DIR}/../pyproject.toml" ]; then
+    REPO_ROOT="$(cd "${SUBMIT_DIR}/.." && pwd)"
+else
+    echo "ERROR: cannot locate repo root from '${SUBMIT_DIR}'." >&2
+    exit 1
+fi
+SCRIPT_DIR="${REPO_ROOT}/slurm"
 OLLAMA_SIF="${SCRIPT_DIR}/ollama.sif"
 LOG_DIR="${SCRIPT_DIR}/logs"
 OUTPUT_DIR="${REPO_ROOT}/out-data"

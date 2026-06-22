@@ -47,8 +47,16 @@ set -euo pipefail
 INPUT_FILE="${1:-}"
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(dirname "${SCRIPT_DIR}")"
+SUBMIT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
+if   [ -f "${SUBMIT_DIR}/pyproject.toml" ]; then
+    REPO_ROOT="${SUBMIT_DIR}"
+elif [ -f "${SUBMIT_DIR}/../pyproject.toml" ]; then
+    REPO_ROOT="$(cd "${SUBMIT_DIR}/.." && pwd)"
+else
+    echo "ERROR: cannot locate repo root from '${SUBMIT_DIR}'." >&2
+    exit 1
+fi
+SCRIPT_DIR="${REPO_ROOT}/slurm"
 LOG_DIR="${SCRIPT_DIR}/logs"
 OUTPUT_DIR="${REPO_ROOT}/out-data"
 
