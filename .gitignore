@@ -6,3 +6,4 @@
 *.bak.ipynb
 in-data/corpus_*.csv
 out-data/*
+slurm/*.sif
