@@ -41,6 +41,8 @@
 #SBATCH --mail-type=none
 #SBATCH --mail-user=wagner@lhlt.mpg.de
 #SBATCH --job-name=svsal-embeddings
+#SBATCH --export=ALL
+#SBATCH --get-user-env=L
 
 #SBATCH -D .                    # Initial working directory
 #SBATCH --output=%x_%j.out
@@ -115,6 +117,7 @@ OUTPUT_DIR="${REPO_ROOT}/out-data"
 # are found again by every later job. Override OLLAMA_MODELS yourself before
 # calling sbatch if you need an isolated/job-specific cache instead.
 OLLAMA_MODELS="${OLLAMA_MODELS:-${PTMP:-${TMPDIR:-${HOME}/ollama_models}}/ollama_models}"
+
 OLLAMA_SERVER_LOG="${LOG_DIR}/ollama_server_${SLURM_JOB_ID:-local}.log"
 
 mkdir -p "${LOG_DIR}" "${OUTPUT_DIR}" "${OLLAMA_MODELS}"
@@ -148,6 +151,13 @@ fi
 
 # ── Start Ollama server inside the container ───────────────────────────────────
 echo "Starting Ollama server on port ${OLLAMA_PORT} …"
+echo "OLLAMA_MODELS outside the apptainer is: $OLLAMA_MODELS"
+apptainer exec ${GPU_FLAG} \
+        --env "OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT}" \
+        --env "OLLAMA_MODELS=${OLLAMA_MODELS}" \
+        --bind "${OLLAMA_MODELS}:${OLLAMA_MODELS}" \
+        "${OLLAMA_SIF}" bash -c 'echo "OLLAMA_MODELS inside the apptainer is: ${OLLAMA_MODELS}" ; ls -la ${OLLAMA_MODELS}'
+
 apptainer run ${GPU_FLAG} \
     --env "OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT}" \
     --env "OLLAMA_MODELS=${OLLAMA_MODELS}" \
@@ -214,7 +224,9 @@ done
 # ── Create embeddings ─────────────────────────────────────────────────────────
 echo "Starting embedding creation …"
 uv run python "${SCRIPT_DIR}/create_embeddings_ollama.py" \
-    --input              "${REPO_ROOT}/in-data/corpus_20260111.csv" \
+    --input              "${REPO_ROOT}/in-data/corpus_20260621.csv" \
+    --text-column        content \
+    --id-column          url \
     --output-dir         "${OUTPUT_DIR}" \
     "${MODEL_ARGS[@]}" \
     --url                "${OLLAMA_URL}/v1" \
