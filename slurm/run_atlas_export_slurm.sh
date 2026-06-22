@@ -25,8 +25,8 @@
 #SBATCH --job-name=svsal-atlas-export
 
 #SBATCH -D .                    # Initial working directory
-#SBATCH --output=%x_%j.out
-#SBATCH --error=%x_%j.err
+#SBATCH --output=logs/%x_%j.out
+#SBATCH --error=logs/%x_%j.err
 
 # --- VIPER default: CPU-only node, several hours walltime ---
 #SBATCH --time=12:00:00
@@ -57,7 +57,7 @@ else
     exit 1
 fi
 SCRIPT_DIR="${REPO_ROOT}/slurm"
-LOG_DIR="${SCRIPT_DIR}/logs"
+LOG_DIR="${REPO_ROOT}/logs"
 OUTPUT_DIR="${REPO_ROOT}/out-data"
 
 mkdir -p "${LOG_DIR}" "${OUTPUT_DIR}"
