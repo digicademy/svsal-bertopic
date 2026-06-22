@@ -43,6 +43,12 @@
 
 set -euo pipefail
 
+# MPCDF injects ARGOS via LD_PRELOAD on the host, which spams errors
+# every time we apptainer-exec into the container (where the .so files
+# don't exist). Clear it for the duration of this job. SLURM accounting
+# is unaffected; only in-container profiling via ARGOS is.
+unset LD_PRELOAD
+
 # ── Parameters ────────────────────────────────────────────────────────────────
 INPUT_FILE="${1:-}"
 
