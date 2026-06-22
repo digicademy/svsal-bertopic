@@ -45,15 +45,15 @@
 #SBATCH --get-user-env=L
 
 #SBATCH -D .                    # Initial working directory
-#SBATCH --output=%x_%j.out
-#SBATCH --error=%x_%j.err
+#SBATCH --output=logs/%x_%j.out
+#SBATCH --error=logs/%x_%j.err
 
 #SBATCH --constraint="apu"
 
 # --- Change the following for testing the workflow/GPU setup ---
-#SBATCH --time=00:15:00
-# #SBATCH --partition=apu
-#SBATCH --partition=apudev      # apudev: for testing, 1 node with 2 MI300, 15 min. walltime
+#SBATCH --time=22:00:00
+#SBATCH --partition=apu
+# #SBATCH --partition=apudev      # apudev: for testing, 1 node with 2 MI300, 15 min. walltime
 
 # --- VIPER default case: use a single APU on a shared node ---
 #SBATCH --gres=gpu:1
@@ -106,17 +106,23 @@ else
     echo "ERROR: cannot locate repo root from '${SUBMIT_DIR}'." >&2
     exit 1
 fi
+INPUT_FILE="${REPO_ROOT}/in-data/corpus_20260621.csv"
+INPUT_TEXT_COLUMN="content"
+INPUT_ID_COLUMN="url"
 SCRIPT_DIR="${REPO_ROOT}/slurm"
 OLLAMA_SIF="${SCRIPT_DIR}/ollama.sif"
-LOG_DIR="${SCRIPT_DIR}"
+LOG_DIR="${REPO_ROOT}/logs"
 OUTPUT_DIR="${REPO_ROOT}/out-data"
+
+CONCURRENT_REQ=5
+BATCH_SIZE=32
 
 # Prefer an externally-supplied OLLAMA_MODELS; otherwise build it from
 # the canonical scratch directory layout, since $PTMP is not always
 # exported into SLURM jobs on this cluster.
 if [ -z "${OLLAMA_MODELS:-}" ]; then
-    if   [ -d "/ptmp/${USER}" ];   then OLLAMA_MODELS="/ptmp/${USER}/ollama-models"
-    elif [ -d "/scratch/${USER}" ];then OLLAMA_MODELS="/scratch/${USER}/ollama-models"
+    if   [ -d "/ptmp/${USER}" ];   then OLLAMA_MODELS="/ptmp/${USER}/ollama_models"
+    elif [ -d "/scratch/${USER}" ];then OLLAMA_MODELS="/scratch/${USER}/ollama_models"
     elif [ -n "${TMPDIR:-}" ];     then OLLAMA_MODELS="${TMPDIR}/ollama_models"
     else                                OLLAMA_MODELS="${HOME}/ollama_models"
     fi
@@ -154,13 +160,6 @@ fi
 
 # ── Start Ollama server inside the container ───────────────────────────────────
 echo "Starting Ollama server on port ${OLLAMA_PORT} …"
-echo "OLLAMA_MODELS outside the apptainer is: $OLLAMA_MODELS"
-apptainer exec ${GPU_FLAG} \
-        --env "OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT}" \
-        --env "OLLAMA_MODELS=${OLLAMA_MODELS}" \
-        --bind "${OLLAMA_MODELS}:${OLLAMA_MODELS}" \
-        "${OLLAMA_SIF}" bash -c 'echo "OLLAMA_MODELS inside the apptainer is: ${OLLAMA_MODELS}" ; ls -la ${OLLAMA_MODELS}'
-
 apptainer run ${GPU_FLAG} \
     --env "OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT}" \
     --env "OLLAMA_MODELS=${OLLAMA_MODELS}" \
@@ -227,14 +226,14 @@ done
 # ── Create embeddings ─────────────────────────────────────────────────────────
 echo "Starting embedding creation …"
 uv run python "${SCRIPT_DIR}/create_embeddings_ollama.py" \
-    --input              "${REPO_ROOT}/in-data/corpus_20260621.csv" \
-    --text-column        content \
-    --id-column          url \
+    --input              "${INPUT_FILE}" \
+    --text-column        "${INPUT_TEXT_COLUMN}" \
+    --id-column          "${INPUT_ID_COLUMN}" \
     --output-dir         "${OUTPUT_DIR}" \
     "${MODEL_ARGS[@]}" \
     --url                "${OLLAMA_URL}/v1" \
-    --concurrent-requests 5 \
-    --batch-size         32
+    --concurrent-requests ${CONCURRENT_REQ} \
+    --batch-size         ${BATCH_SIZE}
 
 EXIT_CODE=$?
 if [ "${EXIT_CODE}" -ne 0 ]; then
