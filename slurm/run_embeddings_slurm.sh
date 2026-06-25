@@ -22,6 +22,27 @@
 #   sbatch slurm/run_embeddings_slurm.sh bge-m3
 #   sbatch slurm/run_embeddings_slurm.sh bge-m3 nomic-embed-text mxbai-embed-large
 #
+# To run two projects with different corpora in parallel, override input
+# and output paths (and pick distinct ports if jobs may land on the same
+# node):
+#
+#   INPUT_FILE=$PWD/in-data/projectA.csv \
+#   OUTPUT_DIR=$PWD/out-data/projectA \
+#       sbatch --export=ALL slurm/run_embeddings_slurm.sh all
+#
+#   INPUT_FILE=$PWD/in-data/projectB.csv \
+#   OUTPUT_DIR=$PWD/out-data/projectB \
+#   OLLAMA_PORT=11435 \
+#       sbatch --export=ALL slurm/run_embeddings_slurm.sh all
+#
+# Recognised environment-variable overrides:
+#   INPUT_FILE          path to the input CSV (default: in-data/corpus_20260621.csv)
+#   OUTPUT_DIR          where to write all output files (default: out-data/)
+#   INPUT_TEXT_COLUMN   CSV column with the text to embed (default: content)
+#   INPUT_ID_COLUMN     CSV column with the document ID (default: url)
+#   OLLAMA_PORT         port for the Ollama server (default: 11434)
+#   OLLAMA_MODELS       Ollama model cache directory (default: /ptmp/$USER/ollama_models)
+#
 # Good embedding models for Spanish / Latin texts (check https://ollama.com/search?c=embedding):
 #   nomic-embed-text          768 dims   fast, solid quality
 #   mxbai-embed-large         1024 dims  high quality
@@ -96,7 +117,7 @@ if [ "$#" -eq 0 ]; then
 else
     MODELS=("$@")
 fi
-OLLAMA_PORT=11434
+OLLAMA_PORT="${OLLAMA_PORT:-11434}"
 OLLAMA_URL="http://localhost:${OLLAMA_PORT}"
 
 # GPU flag: --nv for NVIDIA (Raven), --rocm for AMD (VIPER)
@@ -112,13 +133,13 @@ else
     echo "ERROR: cannot locate repo root from '${SUBMIT_DIR}'." >&2
     exit 1
 fi
-INPUT_FILE="${REPO_ROOT}/in-data/corpus_20260621.csv"
-INPUT_TEXT_COLUMN="content"
-INPUT_ID_COLUMN="url"
+INPUT_FILE="${INPUT_FILE:-${REPO_ROOT}/in-data/corpus_20260621.csv}"
+INPUT_TEXT_COLUMN="${INPUT_TEXT_COLUMN:-content}"
+INPUT_ID_COLUMN="${INPUT_ID_COLUMN:-url}"
 SCRIPT_DIR="${REPO_ROOT}/slurm"
 OLLAMA_SIF="${SCRIPT_DIR}/ollama.sif"
 LOG_DIR="${REPO_ROOT}/logs"
-OUTPUT_DIR="${REPO_ROOT}/out-data"
+OUTPUT_DIR="${OUTPUT_DIR:-${REPO_ROOT}/out-data}"
 
 CONCURRENT_REQ=5
 BATCH_SIZE=32
@@ -142,6 +163,10 @@ echo "  SVSAL Embedding Creation"
 echo "  Job   : ${SLURM_JOB_ID:-<interactive>}"
 echo "  Node  : ${SLURMD_NODENAME:-$(hostname)}"
 echo "  Models: ${MODELS[*]}"
+echo "  Port  : ${OLLAMA_PORT}"
+echo "  Input : ${INPUT_FILE}"
+echo "  Output: ${OUTPUT_DIR}"
+echo "  Cache : ${OLLAMA_MODELS}"
 echo "  Time  : $(date)"
 echo "  Repo  : ${REPO_ROOT}"
 echo "=================================================="

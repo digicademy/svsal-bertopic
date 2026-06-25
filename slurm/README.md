@@ -17,12 +17,13 @@ modification.
 
 ```
 slurm/
-├── README.md                     # this file
-├── run_embeddings_slurm.sh       # SLURM batch script — create embeddings (entry point)
-├── run_atlas_export_slurm.sh     # SLURM batch script — Embedding Atlas export (CPU job)
-├── create_embeddings_ollama.py   # Python embedding script
-├── wait_for_server.py            # server-readiness probe (used by the batch script)
-└── ollama.sif                    # Apptainer image — created by you (see below, not in git)
+├── README.md                                       # this file
+├── run_embeddings_slurm.sh                         # SLURM batch script — create embeddings (entry point)
+├── run_atlas_export_slurm.sh                       # SLURM batch script — Embedding Atlas export (CPU job)
+├── create_embeddings_ollama.py                     # Python embedding script
+├── wait_for_server.py                              # server-readiness probe (used by the batch script)
+├── backfill_cache_from_per_model_parquets.py       # one-shot utility for cross-run accumulation
+└── ollama.sif                                      # Apptainer image — created by you (see below, not in git)
 ```
 
 > `ollama.sif` is **not** tracked by git (see `.gitignore`).
@@ -374,6 +375,93 @@ sbatch slurm/run_embeddings_slurm.sh bge-m3 mxbai-embed-large
 
 > **Tip:** For very large corpora, set `--time` to the maximum allowed by your
 > cluster and rely on the cache for multi-day runs across several jobs.
+
+---
+
+## Cross-run accumulation across models
+
+The dated output files (`<date>_all_docs.parquet`, `<date>_all_embeddings.*`,
+`<date>_all_processing_metadata.json`, `<date>_all_embedding_statistics.json`)
+reflect the **full set of providers in the cache**, not only the models from
+the current run. So a sequence like:
+
+```bash
+sbatch slurm/run_embeddings_slurm.sh bge-m3
+# ... wait for completion ...
+sbatch slurm/run_embeddings_slurm.sh nomic-embed-text
+# ... wait ...
+sbatch slurm/run_embeddings_slurm.sh mxbai-embed-large
+```
+
+ends with a docs parquet whose columns include all three
+`embeddings_localhost_*` providers. The single-model SLURM run does the
+right thing for incremental work; you don't have to merge anything by hand.
+
+A few notes:
+
+- The dated outputs **overwrite same-day predecessors**. So three sequential
+  runs on the same day all write to `out-data/2026-06-25_all_docs.parquet`;
+  each rewrite is cumulative, so the file at the end contains all providers.
+  Same-day re-runs are fine — they don't lose data, they just rewrite the
+  same files cumulatively.
+- For providers from earlier runs, the per-provider sub-dict in
+  `<date>_all_processing_metadata.json` has `from_previous_run: true` and
+  the run-specific fields (concurrency, batch size, native context, etc.)
+  are `null`, since that information isn't recoverable. The manifest entry
+  contributes `completed_at`, `file`, and `num_embeddings`.
+
+### Backfilling the cache from existing per-model parquets
+
+If you've run the SLURM job several times *before* cross-run accumulation
+was added (or your cache was deleted / lost), but you still have the per-
+model `localhost_<model>_<timestamp>.parquet` snapshots on disk, you can
+rebuild the cache and manifest in one shot:
+
+```bash
+uv run python slurm/backfill_cache_from_per_model_parquets.py \
+    --output-dir out-data
+```
+
+The script picks the most recent parquet per provider, writes a merged
+`embeddings_cache.pkl` and `embeddings_manifest.json`, and backs up any
+pre-existing copies. Add `--dry-run` to preview without writing.
+
+After backfilling, the next SLURM job (even with a single new model) will
+produce a docs parquet that includes every backfilled provider.
+
+---
+
+## Running two projects in parallel
+
+The SLURM script honours these environment variables, which lets you submit
+several independent runs against different corpora without editing the script
+each time:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `INPUT_FILE` | `in-data/corpus_20260621.csv` | Path to the corpus CSV |
+| `OUTPUT_DIR` | `out-data/` | Where all output files go (cache, manifest, dated outputs, per-model parquets) |
+| `INPUT_TEXT_COLUMN` | `content` | CSV column containing the passage text |
+| `INPUT_ID_COLUMN` | `url` | CSV column containing the document ID |
+| `OLLAMA_PORT` | `11434` | Port the in-job Ollama server binds to |
+| `OLLAMA_MODELS` | `/ptmp/$USER/ollama_models` | Ollama model cache directory |
+
+Combine with `sbatch --export=ALL` so the overrides reach the job:
+
+```bash
+INPUT_FILE=$PWD/in-data/projectA.csv \
+OUTPUT_DIR=$PWD/out-data/projectA \
+    sbatch --export=ALL slurm/run_embeddings_slurm.sh all
+
+INPUT_FILE=$PWD/in-data/projectB.csv \
+OUTPUT_DIR=$PWD/out-data/projectB \
+OLLAMA_PORT=11435 \
+    sbatch --export=ALL slurm/run_embeddings_slurm.sh all
+```
+
+Each project gets its own cache, manifest, and dated outputs. The `OLLAMA_PORT`
+override is only needed if SLURM happens to land both jobs on the same node
+(rare, since each requests `--gres=gpu:1`, but cheap insurance).
 
 ---
 

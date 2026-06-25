@@ -375,6 +375,17 @@ def provider_id_for(model: str) -> str:
     return f"localhost_{model}"
 
 
+def model_for_provider_id(pid: str) -> str:
+    """Inverse of :func:`provider_id_for` for our locally-hosted prefix.
+
+    Provider IDs from this script start with ``localhost_``. Any other
+    prefix is preserved as-is so we don't silently mangle external
+    provider IDs that may end up in a cache file later.
+    """
+    prefix = "localhost_"
+    return pid[len(prefix):] if pid.startswith(prefix) else pid
+
+
 # ── Ollama model discovery ────────────────────────────────────────────────────
 
 def _native_base_url(openai_base_url: str) -> str:
@@ -803,9 +814,24 @@ def assemble_outputs(
     stats_by_pid: Dict[str, EmbeddingStatistics],
     config: dict,
     output_dir: str,
+    manifest: dict,
     logger: logging.Logger,
 ) -> None:
-    """Write the dated, final output files in the notebook's shapes."""
+    """Write the dated, final output files in the notebook's shapes.
+
+    Cross-run accumulation: the dated outputs reflect the *full* set of
+    providers currently in the cache, not just the models embedded in
+    this run. So repeated `sbatch slurm/run_embeddings_slurm.sh X` calls
+    with different X values build a single combined dataset on disk,
+    where each docs parquet contains an `embeddings_<provider_id>`
+    column for every model ever embedded against this corpus.
+
+    Providers that aren't part of this run still appear in the outputs;
+    their per-provider metadata is filled in from the manifest where
+    available (file path, completion timestamp, embedding count), and
+    left as ``None`` for run-specific fields (concurrency, batch size,
+    statistics) since we don't have that information any more.
+    """
     prefix = datetime.now().strftime("%Y-%m-%d") + "_"
 
     docs_pkl = os.path.join(output_dir, f"{prefix}all_docs.pkl")
@@ -817,10 +843,26 @@ def assemble_outputs(
     config_path = os.path.join(output_dir, f"{prefix}all_processing_metadata.json")
     stats_path = os.path.join(output_dir, f"{prefix}all_embedding_statistics.json")
 
-    # ── Docs DataFrame: one ``embeddings_<provider_id>`` column per model ───
+    # ── Build the ordered list of providers to include in the outputs ────────
+    # Order: this run's models first (preserving CLI order), then any other
+    # providers found in the cache, sorted alphabetically for determinism.
+    this_run_pids = [provider_id_for(m) for m in models]
+    cached_pids_with_data = {
+        pid for pid, doc_map in cache.items() if doc_map
+    }
+    extra_pids = sorted(cached_pids_with_data - set(this_run_pids))
+    all_pids = this_run_pids + extra_pids
+    all_models = [model_for_provider_id(pid) for pid in all_pids]
+
+    if extra_pids:
+        logger.info(
+            f"Including {len(extra_pids)} provider(s) from previous runs in "
+            f"the dated outputs: {', '.join(extra_pids)}"
+        )
+
+    # ── Docs DataFrame: one ``embeddings_<provider_id>`` column per provider ─
     enriched = df_docs
-    for model in models:
-        pid = provider_id_for(model)
+    for pid in all_pids:
         col = f"embeddings_{pid}"
         provider_cache = cache.get(pid, {})
 
@@ -844,28 +886,25 @@ def assemble_outputs(
     logger.info(f"Wrote {docs_csv}")
 
     # ── Nested-dict embeddings (matches notebook's cache_data shape) ────────
-    cache_for_models: Dict[str, Dict[str, List[float]]] = {
-        provider_id_for(m): cache.get(provider_id_for(m), {}) for m in models
+    cache_for_pids: Dict[str, Dict[str, List[float]]] = {
+        pid: cache.get(pid, {}) for pid in all_pids
     }
-    atomic_save_pickle(cache_for_models, emb_pkl)
+    atomic_save_pickle(cache_for_pids, emb_pkl)
     # Parquet: match the notebook exactly. ``pl.DataFrame(d).write_parquet``
     # on a dict-of-dicts produces a one-row table where each provider_id is
     # one column whose cell holds that provider's ``{doc_id: vector}`` map.
-    pl.DataFrame(cache_for_models).write_parquet(emb_parquet)
+    pl.DataFrame(cache_for_pids).write_parquet(emb_parquet)
     logger.info(f"Wrote {emb_pkl}")
     logger.info(f"Wrote {emb_parquet}")
 
-    # ── JSONL: one record per (doc_id, model) for vector-DB upload ──────────
-    # Pull metadata from the docs DataFrame so each line carries the original
-    # columns alongside the embedding.
+    # ── JSONL: one record per (doc_id, provider) for vector-DB upload ───────
     meta_lookup = {
         str(row[id_col]): {k: v for k, v in row.items() if k != id_col}
         for row in enriched.drop([c for c in enriched.columns if c.startswith("embeddings_")]).iter_rows(named=True)
     }
     with open(emb_jsonl, "wb") as f:
-        for model in models:
-            pid = provider_id_for(model)
-            for doc_id, vector in cache_for_models[pid].items():
+        for pid, model in zip(all_pids, all_models):
+            for doc_id, vector in cache_for_pids[pid].items():
                 payload = {
                     "id": doc_id,
                     "model": model,
@@ -877,6 +916,41 @@ def assemble_outputs(
     logger.info(f"Wrote {emb_jsonl}")
 
     # ── Per-provider config / stats JSON ─────────────────────────────────────
+    manifest_providers = manifest.get("providers", {}) if manifest else {}
+
+    def _provider_metadata(pid: str, model: str) -> dict:
+        """Build the per-provider metadata sub-dict.
+
+        For providers that ran *this* invocation, every field is populated
+        from the live run. For providers that come from earlier runs, we
+        only know what the manifest tells us — file path, completion
+        timestamp, document count — so the rest is left as ``None``.
+        """
+        is_this_run = model in model_configs
+        manifest_entry = manifest_providers.get(pid, {})
+        return {
+            "provider": "localhost",
+            "model": model,
+            "api_spec": "openai" if is_this_run else None,
+            "base_url": config["server_url"] if is_this_run else None,
+            "effective_context_limit": context_limits.get(model) if is_this_run else None,
+            "native_context_length":
+                model_configs[model].get("context_length") if is_this_run else None,
+            "embedding_length":
+                model_configs[model].get("embedding_length") if is_this_run else None,
+            "family": model_configs[model].get("family") if is_this_run else None,
+            "parameter_size": model_configs[model].get("parameter_size") if is_this_run else None,
+            "quantization_level":
+                model_configs[model].get("quantization_level") if is_this_run else None,
+            "user_context_cap": config["context_limit"] if is_this_run else None,
+            "concurrent_requests": config["concurrent_requests"] if is_this_run else None,
+            "batch_size": config["batch_size"] if is_this_run else None,
+            "documents_processed": len(cache_for_pids[pid]),
+            "from_previous_run": not is_this_run,
+            "manifest_completed_at": manifest_entry.get("completed_at"),
+            "manifest_file": manifest_entry.get("file"),
+        }
+
     config_export = {
         "processing_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "input_file": config["input_file"],
@@ -888,29 +962,15 @@ def assemble_outputs(
             "min_tokens_threshold": config["min_tokens"],
         },
         "providers": {
-            provider_id_for(model): {
-                "provider": "localhost",
-                "model": model,
-                "api_spec": "openai",
-                "base_url": config["server_url"],
-                "effective_context_limit": context_limits[model],
-                "native_context_length": model_configs[model].get("context_length"),
-                "embedding_length": model_configs[model].get("embedding_length"),
-                "family": model_configs[model].get("family"),
-                "parameter_size": model_configs[model].get("parameter_size"),
-                "quantization_level": model_configs[model].get("quantization_level"),
-                "user_context_cap": config["context_limit"],
-                "concurrent_requests": config["concurrent_requests"],
-                "batch_size": config["batch_size"],
-                "documents_processed": len(cache_for_models[provider_id_for(model)]),
-            }
-            for model in models
+            pid: _provider_metadata(pid, model)
+            for pid, model in zip(all_pids, all_models)
         },
     }
     atomic_save_json(config_export, config_path)
     logger.info(f"Wrote {config_path}")
 
-    # Stats: one provider-keyed sub-dict per model, plus an overall summary.
+    # Stats: this-run providers get full stats; past-run providers get a
+    # minimal sub-dict that distinguishes them clearly.
     failed_by_pid = {
         pid: {f["doc_id"] for f in s.failed_docs}
         for pid, s in stats_by_pid.items()
@@ -925,15 +985,32 @@ def assemble_outputs(
         doc_id for doc_id in all_doc_ids
         if 0 < sum(1 for s in failed_by_pid.values() if doc_id in s) < len(failed_by_pid)
     }
+    providers_stats: Dict[str, dict] = {
+        pid: stats_by_pid[pid].to_dict() for pid in stats_by_pid
+    }
+    for pid in extra_pids:
+        providers_stats[pid] = {
+            "provider_id": pid,
+            "from_previous_run": True,
+            "documents_processed": len(cache_for_pids[pid]),
+            "manifest_completed_at":
+                manifest_providers.get(pid, {}).get("completed_at"),
+        }
     stats_export = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "total_documents": len(all_doc_ids),
-        "providers": {pid: s.to_dict() for pid, s in stats_by_pid.items()},
+        "providers": providers_stats,
         "summary": {
             "critical_failures": len(critical_failures),
             "partial_success": len(partial_failures),
             "full_success": len(all_doc_ids) - len(critical_failures) - len(partial_failures),
             "critical_failure_docs": sorted(critical_failures),
+            "note": (
+                "Summary counts reflect only this run's models; past-run "
+                "providers (where present) are listed without per-doc "
+                "statistics."
+                if extra_pids else None
+            ),
         },
     }
     atomic_save_json(stats_export, stats_path)
@@ -1163,6 +1240,7 @@ async def amain() -> None:
         stats_by_pid=stats_by_pid,
         config=config,
         output_dir=args.output_dir,
+        manifest=manifest,
         logger=logger,
     )
     logger.info("=== All done. ===")
