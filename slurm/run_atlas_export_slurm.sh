@@ -23,6 +23,8 @@
 #SBATCH --mail-type=none
 #SBATCH --mail-user=wagner@lhlt.mpg.de
 #SBATCH --job-name=svsal-atlas-export
+#SBATCH --export=ALL
+#SBATCH --get-user-env=L
 
 #SBATCH -D .                    # Initial working directory
 #SBATCH --output=logs/%x_%j.out
